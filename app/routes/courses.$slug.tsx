@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useFetcher, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/courses.$slug";
 import {
@@ -42,6 +42,8 @@ import { formatDuration, formatPrice } from "~/lib/utils";
 import { renderMarkdown } from "~/lib/markdown.server";
 import { resolveCountry } from "~/lib/country.server";
 import { calculatePppPrice, getCountryTierInfo } from "~/lib/ppp";
+import { getAverageRating, getReviewByUserAndCourse } from "~/services/reviewService";
+import { StarRating, InteractiveStarRating } from "~/components/star-rating";
 
 export function meta({ data: loaderData }: Route.MetaArgs) {
   const title = loaderData?.course?.title ?? "Course";
@@ -102,6 +104,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     : courseWithDetails.price;
   const tierInfo = getCountryTierInfo(country);
 
+  const { avgRating, count: ratingCount } = getAverageRating(course.id);
+  const userReview = currentUserId
+    ? getReviewByUserAndCourse(currentUserId, course.id)
+    : null;
+
   return {
     course: courseWithDetails,
     salesCopyHtml,
@@ -113,6 +120,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     currentUserId,
     pppPrice,
     tierInfo,
+    avgRating,
+    ratingCount,
+    userRating: userReview?.rating ?? null,
   };
 }
 
@@ -181,6 +191,9 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
     currentUserId,
     pppPrice,
     tierInfo,
+    avgRating,
+    ratingCount,
+    userRating,
   } = loaderData;
   const isInstructor = currentUserId === course.instructorId;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -320,7 +333,14 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
               {formatDuration(totalDuration, true, false, false)} total
             </span>
           )}
+          <StarRating rating={avgRating} count={ratingCount} size="md" />
         </div>
+        {enrolled && (
+          <UserCourseRating
+            courseId={course.id}
+            initialRating={userRating}
+          />
+        )}
       </div>
 
       {/* Two-column: sales copy left, sidebar right */}
@@ -446,6 +466,34 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+function UserCourseRating({
+  courseId,
+  initialRating,
+}: {
+  courseId: number;
+  initialRating: number | null;
+}) {
+  const fetcher = useFetcher();
+  const optimisticRating =
+    fetcher.formData ? Number(fetcher.formData.get("rating")) : initialRating;
+
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <span className="text-muted-foreground">Your rating:</span>
+      <InteractiveStarRating
+        currentRating={optimisticRating}
+        onRate={(value) =>
+          fetcher.submit(
+            { courseId: String(courseId), rating: String(value) },
+            { method: "POST", action: "/api/review", encType: "application/json" }
+          )
+        }
+        disabled={fetcher.state !== "idle"}
+      />
     </div>
   );
 }
